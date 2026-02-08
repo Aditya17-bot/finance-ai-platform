@@ -11,13 +11,9 @@ from app.schemas import CreditInput, FraudInput, SpendingLiteInput
 # =====================================================
 # PATH SETUP
 # =====================================================
-<<<<<<< HEAD
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR.parent / "models"
-=======
 BASE_DIR = Path(__file__).resolve().parent
-MODEL_DIR = BASE_DIR / "model"
->>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
 
 # =====================================================
 # APP INIT
@@ -220,8 +216,5 @@ def detect_fraud(data: FraudInput):
         }
 
     except Exception as e:
-<<<<<<< HEAD
         raise HTTPException(500, str(e))
-=======
         raise HTTPException(500, str(e))
->>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
