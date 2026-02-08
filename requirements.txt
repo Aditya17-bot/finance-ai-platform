@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+numpy
+pandas
+scikit-learn
+joblib
+xgboost
+catboost
+lightgbm
+scipy
+langchain-community
+langchain-core
