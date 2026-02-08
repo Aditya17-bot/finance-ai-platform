@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 venv/
 .venv/
 __pycache__/
@@ -5,3 +6,10 @@ __pycache__/
 *.joblib
 *.pkl
 models/
+=======
+venv/
+__pycache__/
+.vscode/
+*.joblib
+*.pkl
+>>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38

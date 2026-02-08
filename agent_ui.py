@@ -53,6 +53,7 @@ st.set_page_config(page_title="AI Financial Agent", page_icon="💰")
 st.title("🤖 Financial AI Agent")
 
 # =====================================================
+<<<<<<< HEAD
 # MODE SELECTOR
 # =====================================================
 st.sidebar.header("Mode")
@@ -64,6 +65,8 @@ mode = st.sidebar.selectbox(
 
 
 # =====================================================
+=======
+>>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
 # HELPERS
 # =====================================================
 
@@ -144,7 +147,14 @@ Text:
 """
     resp = llm.invoke(prompt)
 
+<<<<<<< HEAD
     return try_parse_json(resp.content)
+=======
+    try:
+        return json.loads(resp.content)
+    except Exception:
+        return {}
+>>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
 
 def detect_city_from_text(text: str):
     text = text.lower()
@@ -167,10 +177,13 @@ def build_fraud_payload(user_text: str, extracted: dict) -> dict:
 
     # ---------- Time ----------
     time_hint = extracted.get("time_hint")
+<<<<<<< HEAD
     if not time_hint:
         m = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", user_text)
         if m:
             time_hint = m.group(0)
+=======
+>>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
     if time_hint:
         trans_time = f"{datetime.now().date()} {time_hint}:00"
     else:
@@ -215,12 +228,15 @@ def build_fraud_payload(user_text: str, extracted: dict) -> dict:
 
 # ---------------- SPENDING EXTRACTION ----------------
 def extract_spending_info(user_text: str) -> dict:
+<<<<<<< HEAD
     # 1) If user pasted JSON, parse it directly.
     direct = try_parse_json(user_text)
     if direct:
         return direct
 
     # 2) LLM extraction as fallback.
+=======
+>>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
     prompt = f"""
 Extract monthly financial information.
 Return JSON ONLY.
@@ -237,6 +253,7 @@ Text:
 \"\"\"{user_text}\"\"\"
 """
     resp = llm.invoke(prompt)
+<<<<<<< HEAD
     parsed = try_parse_json(resp.content)
     if parsed:
         return parsed
@@ -305,11 +322,14 @@ Text:
 \"\"\"{user_text}\"\"\"
 """
     resp = llm.invoke(prompt)
+=======
+>>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
     try:
         return json.loads(resp.content)
     except Exception:
         return {}
 
+<<<<<<< HEAD
 def validate_credit_payload(payload: dict) -> list:
     required = [
         "ExternalRiskEstimate",
@@ -339,6 +359,8 @@ def validate_credit_payload(payload: dict) -> list:
     missing = [k for k in required if payload.get(k) is None]
     return missing
 
+=======
+>>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
 
 def build_spending_payload(extracted: dict) -> dict:
     income = extracted.get("income") or USER_PROFILE["monthly_income"]
@@ -373,6 +395,7 @@ def build_spending_payload(extracted: dict) -> dict:
 # =====================================================
 # CHAT LOOP
 # =====================================================
+<<<<<<< HEAD
 if mode == "Chat":
     user_input = st.chat_input("Ask about fraud, credit, or spending...")
 
@@ -600,3 +623,54 @@ if mode == "Fraud Manual":
             ).json()
             st.success("Spending Profile Fraud Detection Result")
             st.json(result)
+=======
+user_input = st.chat_input("Ask about fraud, credit, or spending...")
+
+if user_input:
+    st.chat_message("user").markdown(user_input)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Analyzing..."):
+
+            intent = detect_intent(user_input)
+            st.write("🧠 Detected intent:", intent)
+
+            # ================= FRAUD =================
+            if intent == "fraud":
+                extracted = extract_transaction_info(user_input)
+                payload = build_fraud_payload(user_input, extracted)
+
+                st.write("🧾 Fraud payload:")
+                st.json(payload)
+
+                result = requests.post(
+                    f"{API_BASE_URL}/fraud/detect",
+                    json=payload
+                ).json()
+
+                st.success("🚨 Fraud Detection Result")
+                st.json(result)
+
+            # ================= SPENDING =================
+            elif intent == "spending":
+                extracted = extract_spending_info(user_input)
+                payload = build_spending_payload(extracted)
+
+                st.write("🧾 Spending payload:")
+                st.json(payload)
+
+                result = requests.post(
+                    f"{API_BASE_URL}/spending-lite/predict",
+                    json=payload
+                ).json()
+
+                st.success("📊 Spending Profile")
+                st.json(result)
+
+            # ================= CREDIT =================
+            elif intent == "credit":
+                st.info("Credit model integration already working (as tested earlier).")
+
+            else:
+                st.warning("❓ I couldn't determine what you want to analyze.")
+>>>>>>> 359b44f4dadf28adc9965a9e66917e98d74a1a38
