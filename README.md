@@ -1,97 +1,72 @@
 # Finance AI Platform
 
-An AI-powered financial analysis platform that uses machine learning models to help detect fraud, classify user spending behavior, and estimate credit scores.  
-The platform integrates multiple models into a single intelligent agent that can analyze financial data and provide insights automatically.
+FastAPI backend + Streamlit UI for:
+- Fraud detection
+- Credit risk scoring
+- Spending profile classification
+
+This project combines multiple financial ML models behind a single API and Streamlit interface so you can analyze transactions, classify spending behavior, and estimate credit-related outcomes in one place.
 
 ## Features
 
-### 1. Fraud Detection Model
-A machine learning model designed to detect suspicious or fraudulent financial transactions.  
-It analyzes transaction patterns and flags anomalies that may indicate fraudulent activity.
+- Fraud detection for suspicious transaction patterns
+- Spending profile classification
+- Credit score prediction
+- Unified agent-style interface across models
 
-**Key capabilities**
-- Transaction anomaly detection
-- Pattern recognition in financial activity
-- Risk scoring for suspicious transactions
+## Prerequisites
 
-### 2. Spending Classifier
-This model categorizes user transactions into different spending categories.
+- Python 3.10+ recommended
+- Ollama installed and running
+- Ollama model available: `qwen2.5:7b`
 
-**Examples**
-- Food & Dining
-- Transportation
-- Shopping
-- Utilities
-- Entertainment
+## Setup
 
-This helps users understand their financial behavior and track where their money is being spent.
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
-### 3. Credit Score Prediction
-A predictive model that estimates a user's credit score based on financial behavior and transaction history.
+## Run Backend
 
-**Inputs may include**
-- Payment history
-- Transaction patterns
-- Spending behavior
-- Financial stability indicators
+```powershell
+python -m uvicorn app.main:app --reload
+```
 
-The goal is to provide a rough estimate of creditworthiness.
+Backend health check:
 
-## AI Agent
+```powershell
+curl http://127.0.0.1:8000/
+```
 
-An intelligent agent is built around the models to coordinate their usage.  
-The agent can:
+## Run UI
 
-- Receive financial data
-- Route the data to the appropriate model
-- Combine outputs from multiple models
-- Provide insights or predictions in a unified response
+In another terminal:
 
-This allows the system to act like a **financial analysis assistant** rather than just individual ML models.
+```powershell
+.\.venv\Scripts\Activate.ps1
+streamlit run agent_ui.py
+```
 
-## Architecture
+## Optional Environment Variables
 
-The platform consists of three main layers:
+- `API_BASE_URL` default: `http://127.0.0.1:8000`
+- `LLM_MODEL` default: `qwen2.5:7b`
 
-1. **Data Processing Layer**
-   - Cleans and prepares financial data
-   - Feature engineering for model input
+Example:
 
-2. **Machine Learning Layer**
-   - Fraud Detection Model
-   - Spending Classification Model
-   - Credit Score Prediction Model
+```powershell
+$env:API_BASE_URL="http://127.0.0.1:8000"
+$env:LLM_MODEL="qwen2.5:7b"
+streamlit run agent_ui.py
+```
 
-3. **Agent Layer**
-   - Handles user queries
-   - Calls appropriate models
-   - Aggregates and returns results
+## Project Files
 
-## Technologies Used
-
-- Python
-- Machine Learning (Scikit-learn / PyTorch / TensorFlow depending on implementation)
-- Data Processing (Pandas, NumPy)
-- AI Agent Framework
-
-## Example Workflow
-
-1. User provides transaction data
-2. The AI agent processes the request
-3. Fraud model checks for suspicious activity
-4. Spending classifier categorizes transactions
-5. Credit model estimates credit score
-6. Agent combines results and returns insights
-
-## Future Improvements
-
-- Real-time fraud detection
-- Personalized financial advice
-- Reinforcement learning for spending optimization
-- Integration with banking APIs
-- Explainable AI for better transparency
-
-## Author
-
-Aditya Sridhar  
-Student developer interested in AI, machine learning, and intelligent systems.
+- `app/main.py`
+- `app/schemas.py`
+- `agent_ui.py`
+- `models/credit_model.joblib`
+- `models/fraud_model.joblib`
+- `models/spending_model.joblib`

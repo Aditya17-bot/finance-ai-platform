@@ -1,602 +1,1062 @@
 import streamlit as st
 import requests
 import json
-import re
+import os
+import time
 from datetime import datetime
-from langchain_community.chat_models import ChatOllama
+from requests.exceptions import RequestException
+
+# =====================================================
+# OPTIONAL LLM IMPORT
+# =====================================================
+try:
+    from langchain_ollama import ChatOllama
+    LLM_AVAILABLE = True
+except Exception:
+    try:
+        from langchain_community.chat_models import ChatOllama
+        LLM_AVAILABLE = True
+    except Exception:
+        LLM_AVAILABLE = False
 
 # =====================================================
 # CONFIG
 # =====================================================
-API_BASE_URL = "http://127.0.0.1:8000"
-LLM_MODEL = "qwen2.5:7b"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:7b")
+API_TIMEOUT = 30
+
+if LLM_AVAILABLE:
+    try:
+        llm = ChatOllama(model=LLM_MODEL, temperature=0)
+    except Exception:
+        LLM_AVAILABLE = False
 
 # =====================================================
-# LLM (Reasoning / Extraction ONLY)
+# USER PROFILES
 # =====================================================
-llm = ChatOllama(model=LLM_MODEL, temperature=0)
-
-# =====================================================
-# MOCK USER PROFILE (acts like DB / KYC)
-# =====================================================
-USER_PROFILE = {
-    "lat": 12.9716,
-    "long": 77.5946,
-    "city": "Bangalore",
-    "state": "KA",
-    "zip": 560001,
-    "city_pop": 10000000,
-    "job": "Engineer",
-    "dob": "1995-01-01",
-    "avg_amt": 2500,
-    "age": 30,
-    "household_size": 3,
-    "monthly_income": 60000,
-    "owns_house": 0,
-    "owns_vehicle": 1,
-    "city_type": "urban"
+USERS = {
+    "Rahul": {
+        "avatar": "👨‍💼",
+        "archetype": "Balanced Professional",
+        "credit_limit": 100000,
+        "transactions": [
+            {"amount": 1200, "category": "Food", "hour": 20, "location_change": 0, "merchant_type": 1, "txn_velocity": 1},
+            {"amount": 5000, "category": "Luxury", "hour": 18, "location_change": 0, "merchant_type": 2, "txn_velocity": 2},
+            {"amount": 15000, "category": "Rent", "hour": 10, "location_change": 0, "merchant_type": 0, "txn_velocity": 1},
+            {"amount": 3000, "category": "Investment", "hour": 9, "location_change": 0, "merchant_type": 3, "txn_velocity": 1},
+        ]
+    },
+    "Arjun": {
+        "avatar": "🧔",
+        "archetype": "Luxury Overspender",
+        "credit_limit": 150000,
+        "transactions": [
+            {"amount": 8000, "category": "Luxury", "hour": 19, "location_change": 0, "merchant_type": 2, "txn_velocity": 3},
+            {"amount": 7000, "category": "Luxury", "hour": 21, "location_change": 0, "merchant_type": 2, "txn_velocity": 4},
+            {"amount": 12000, "category": "Luxury", "hour": 23, "location_change": 1, "merchant_type": 5, "txn_velocity": 5},
+        ]
+    },
+    "Priya": {
+        "avatar": "👩‍💻",
+        "archetype": "Smart Investor",
+        "credit_limit": 200000,
+        "transactions": [
+            {"amount": 10000, "category": "Investment", "hour": 12, "location_change": 0, "merchant_type": 3, "txn_velocity": 1},
+            {"amount": 3000, "category": "Food", "hour": 20, "location_change": 0, "merchant_type": 1, "txn_velocity": 1},
+            {"amount": 25000, "category": "Investment", "hour": 11, "location_change": 0, "merchant_type": 3, "txn_velocity": 1},
+            {"amount": 8000, "category": "Rent", "hour": 10, "location_change": 0, "merchant_type": 0, "txn_velocity": 1},
+        ]
+    },
+    "Neha": {
+        "avatar": "👩‍🎨",
+        "archetype": "High-Risk Spender",
+        "credit_limit": 80000,
+        "transactions": [
+            {"amount": 12000, "category": "Luxury", "hour": 22, "location_change": 0, "merchant_type": 2, "txn_velocity": 2},
+            {"amount": 10000, "category": "Luxury", "hour": 23, "location_change": 0, "merchant_type": 2, "txn_velocity": 3},
+            {"amount": 18000, "category": "Misc", "hour": 1, "location_change": 1, "merchant_type": 7, "txn_velocity": 6},
+        ]
+    },
+    "Karan": {
+        "avatar": "🕵️",
+        "archetype": "Suspicious Activity",
+        "credit_limit": 50000,
+        "transactions": [
+            {"amount": 1500, "category": "Food", "hour": 19, "location_change": 0, "merchant_type": 1, "txn_velocity": 1},
+            {"amount": 45000, "category": "Luxury", "hour": 2, "location_change": 1, "merchant_type": 7, "txn_velocity": 8},
+        ]
+    }
 }
 
-CITY_COORDS = {
-    "bangalore": (12.9716, 77.5946),
-    "mumbai": (19.0760, 72.8777),
-    "delhi": (28.7041, 77.1025),
-    "new york": (40.7128, -74.0060),
-    "chennai": (13.0827, 80.2707),
-    "hyderabad": (17.3850, 78.4867)
-}
-
 # =====================================================
-# STREAMLIT UI
+# PAGE CONFIG
 # =====================================================
-st.set_page_config(page_title="AI Financial Agent", page_icon="💰")
-st.title(" Financial AI Agent")
-
-# =====================================================
-# MODE SELECTOR
-# =====================================================
-st.sidebar.header("Mode")
-mode = st.sidebar.selectbox(
-    "Choose how you want to run the models",
-    ["Chat", "Fraud Manual", "Spending Manual", "Credit Manual"],
-    index=0
+st.set_page_config(
+    page_title="FinanceAI Terminal",
+    page_icon="💳",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
+# =====================================================
+# GLOBAL STYLES — Dark Terminal Theme
+# =====================================================
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap');
+
+:root {
+    --bg-deep:     #080c14;
+    --bg-panel:    #0d1421;
+    --bg-card:     #111827;
+    --bg-hover:    #1a2436;
+    --amber:       #f59e0b;
+    --amber-dim:   #92400e;
+    --amber-glow:  rgba(245,158,11,0.15);
+    --green:       #10b981;
+    --green-dim:   #064e3b;
+    --red:         #ef4444;
+    --red-dim:     #7f1d1d;
+    --blue:        #3b82f6;
+    --blue-dim:    #1e3a5f;
+    --text-1:      #f1f5f9;
+    --text-2:      #94a3b8;
+    --text-3:      #475569;
+    --border:      #1e2d42;
+    --border-lit:  #2d4a6e;
+}
+
+/* ── BASE ── */
+html, body, .stApp {
+    background: var(--bg-deep) !important;
+    color: var(--text-1) !important;
+    font-family: 'Syne', sans-serif !important;
+}
+
+/* ── HIDE STREAMLIT DEFAULT CHROME ── */
+#MainMenu, footer, header { visibility: hidden; }
+.stDeployButton { display: none; }
+
+/* ── TOP NAV BAR ── */
+.top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 2rem;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    margin: -1rem -1rem 2rem -1rem;
+}
+.top-bar-brand {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--amber);
+    letter-spacing: 0.05em;
+}
+.top-bar-status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--green);
+    background: var(--green-dim);
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    border: 1px solid var(--green);
+}
+.top-bar-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--text-2);
+}
+
+/* ── SIDEBAR ── */
+[data-testid="stSidebar"] {
+    background: var(--bg-panel) !important;
+    border-right: 1px solid var(--border) !important;
+}
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stRadio label {
+    color: var(--text-2) !important;
+    font-size: 0.75rem !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.sidebar-logo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--amber);
+    padding: 1rem 0 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+}
+.sidebar-section {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-3);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 1.5rem 0 0.5rem 0;
+}
+
+/* ── CARDS ── */
+.fin-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    transition: border-color 0.2s;
+}
+.fin-card:hover {
+    border-color: var(--border-lit);
+}
+.fin-card-amber {
+    border-left: 3px solid var(--amber);
+    background: linear-gradient(90deg, rgba(245,158,11,0.05) 0%, var(--bg-card) 100%);
+}
+.fin-card-green {
+    border-left: 3px solid var(--green);
+    background: linear-gradient(90deg, rgba(16,185,129,0.05) 0%, var(--bg-card) 100%);
+}
+.fin-card-red {
+    border-left: 3px solid var(--red);
+    background: linear-gradient(90deg, rgba(239,68,68,0.05) 0%, var(--bg-card) 100%);
+}
+.fin-card-blue {
+    border-left: 3px solid var(--blue);
+    background: linear-gradient(90deg, rgba(59,130,246,0.05) 0%, var(--bg-card) 100%);
+}
+
+/* ── METRIC TILES ── */
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.metric-tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    text-align: center;
+}
+.metric-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-3);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+}
+.metric-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--amber);
+    line-height: 1;
+}
+.metric-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-2);
+    margin-top: 0.35rem;
+}
+
+/* ── SCORE GAUGE ── */
+.score-display {
+    text-align: center;
+    padding: 2rem;
+}
+.score-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 4rem;
+    font-weight: 700;
+    line-height: 1;
+}
+.score-band {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 0.5rem;
+}
+
+/* ── STATUS BADGES ── */
+.badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.3rem 0.8rem;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+}
+.badge-safe   { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+.badge-fraud  { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
+.badge-warn   { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber); }
+.badge-info   { background: var(--blue-dim);  color: var(--blue);  border: 1px solid var(--blue); }
+
+/* ── SECTION HEADERS ── */
+.section-header {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1rem;
+}
+.section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-1);
+    margin-bottom: 0.25rem;
+}
+
+/* ── USER CARD ── */
+.user-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-lit);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.user-avatar { font-size: 2.5rem; }
+.user-name {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-1);
+}
+.user-archetype {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--amber);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* ── TRANSACTION TABLE ── */
+.txn-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+}
+.txn-table th {
+    text-align: left;
+    color: var(--text-3);
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+.txn-table td {
+    padding: 0.6rem 0.75rem;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--border);
+}
+.txn-table tr:last-child td { border-bottom: none; }
+.txn-table tr:hover td { background: var(--bg-hover); }
+.txn-amount { color: var(--amber) !important; font-weight: 600; }
+
+/* ── CATEGORY BAR ── */
+.cat-bar-wrap { margin: 0.4rem 0; }
+.cat-label {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-2);
+    margin-bottom: 0.2rem;
+}
+.cat-bar-bg {
+    background: var(--bg-hover);
+    border-radius: 2px;
+    height: 6px;
+    width: 100%;
+}
+.cat-bar-fill {
+    height: 6px;
+    border-radius: 2px;
+    background: var(--amber);
+    transition: width 0.8s ease;
+}
+
+/* ── INSIGHT CARDS ── */
+.insight-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 0.6rem;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    border: 1px solid transparent;
+}
+.insight-ok     { background: rgba(16,185,129,0.08);  border-color: rgba(16,185,129,0.2);  color: #6ee7b7; }
+.insight-warn   { background: rgba(245,158,11,0.08);  border-color: rgba(245,158,11,0.2);  color: #fcd34d; }
+.insight-danger { background: rgba(239,68,68,0.08);   border-color: rgba(239,68,68,0.2);   color: #fca5a5; }
+.insight-info   { background: rgba(59,130,246,0.08);  border-color: rgba(59,130,246,0.2);  color: #93c5fd; }
+
+/* ── BUTTONS ── */
+.stButton > button {
+    background: var(--amber) !important;
+    color: #000 !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.82rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.08em !important;
+    border: none !important;
+    border-radius: 6px !important;
+    padding: 0.65rem 1.5rem !important;
+    text-transform: uppercase !important;
+    transition: all 0.2s !important;
+    width: 100% !important;
+}
+.stFormSubmitButton > button {
+    background: var(--amber) !important;
+    color: #000 !important;
+}
+.stFormSubmitButton > button:disabled {
+    color: rgba(0, 0, 0, 0.65) !important;
+}
+.stButton > button:hover {
+    background: #fbbf24 !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 20px rgba(245,158,11,0.3) !important;
+}
+.stFormSubmitButton > button:hover {
+    background: #fbbf24 !important;
+}
+.stButton > button:active {
+    transform: translateY(0) !important;
+}
+
+/* ── INPUTS ── */
+.stSelectbox > div > div,
+.stNumberInput > div > div > input,
+.stSlider > div,
+.stTextInput > div > div > input {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text-1) !important;
+    border-radius: 6px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+}
+.stSelectbox label, .stNumberInput label,
+.stSlider label, .stTextInput label {
+    color: var(--text-2) !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+}
+
+/* ── SPINNER ── */
+.stSpinner > div {
+    border-top-color: var(--amber) !important;
+}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-deep); }
+::-webkit-scrollbar-thumb { background: var(--border-lit); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+/* ── DIVIDER ── */
+hr { border-color: var(--border) !important; }
+
+/* ── CHAT BUBBLES ── */
+.chat-user {
+    background: var(--bg-hover);
+    border: 1px solid var(--border-lit);
+    border-radius: 8px 8px 2px 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.9rem;
+    color: var(--text-1);
+    max-width: 80%;
+    margin-left: auto;
+}
+.chat-ai {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px 8px 8px 2px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.9rem;
+    color: var(--text-2);
+    max-width: 85%;
+    border-left: 3px solid var(--amber);
+}
+.chat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-3);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.3rem;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # =====================================================
-# HELPERS
+# API HELPERS
 # =====================================================
-
-def detect_intent(user_text: str) -> str:
-    prompt = f"""
-Classify the user request into ONE category.
-
-fraud:
-- fraud
-- suspicious
-- unauthorized
-- scam
-
-credit:
-- credit score
-- loan
-- credit risk
-
-spending:
-- spending
-- expenses
-- budget
-
-User message:
-\"\"\"{user_text}\"\"\"
-
-Reply with ONE WORD only:
-fraud, credit, spending, or unknown
-"""
-    resp = llm.invoke(prompt)
-    text = resp.content.lower()
-
-    if any(k in text for k in ["fraud", "suspicious", "unauthorized", "scam"]):
-        return "fraud"
-    if any(k in text for k in ["credit", "loan", "risk"]):
-        return "credit"
-    if any(k in text for k in ["spending", "expense", "budget"]):
-        return "spending"
-    return "unknown"
-
-
-# ---------------- AMOUNT NORMALIZATION ----------------
-def normalize_amount(text: str):
-    """
-    ₹1,85,000 → 185000
-    $2,300 → 2300
-    """
-    match = re.search(r"[₹$]?\s*([\d,]+)", text)
-    if not match:
-        return None
+def post_json(path: str, payload: dict):
     try:
-        return int(match.group(1).replace(",", ""))
+        res = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=API_TIMEOUT)
+        res.raise_for_status()
+        return res.json(), None
+    except RequestException as e:
+        return None, str(e)
+
+def check_api_health():
+    try:
+        r = requests.get(f"{API_BASE_URL}/health", timeout=5)
+        return r.json() if r.status_code == 200 else None
     except Exception:
         return None
 
+# =====================================================
+# RENDER HELPERS
+# =====================================================
+def score_color(score: int) -> str:
+    if score >= 750: return "#10b981"
+    elif score >= 700: return "#84cc16"
+    elif score >= 650: return "#eab308"
+    elif score >= 600: return "#f97316"
+    return "#ef4444"
 
-# ---------------- TRANSACTION EXTRACTION ----------------
-def extract_transaction_info(user_text: str) -> dict:
-    prompt = f"""
-You are a STRICT information extraction engine.
+def insight_class(msg: str) -> str:
+    if "🚨" in msg or "FRAUD" in msg or "critically" in msg or "immediate" in msg.lower():
+        return "insight-danger"
+    elif "⚠️" in msg or "⚡" in msg or "rising" in msg or "high" in msg.lower():
+        return "insight-warn"
+    elif "✅" in msg or "🟢" in msg or "Excellent" in msg:
+        return "insight-ok"
+    return "insight-info"
 
-Extract transaction details.
-Return ONLY valid JSON.
-If not mentioned, use null.
+def render_category_bars(breakdown: dict):
+    colors = {
+        "Food": "#f59e0b", "Rent": "#3b82f6",
+        "Luxury": "#a855f7", "Investment": "#10b981", "Misc": "#6b7280"
+    }
+    html = ""
+    for cat, ratio in breakdown.items():
+        pct = round(ratio * 100, 1)
+        color = colors.get(cat, "#f59e0b")
+        html += f"""
+        <div class="cat-bar-wrap">
+            <div class="cat-label"><span>{cat}</span><span>{pct}%</span></div>
+            <div class="cat-bar-bg">
+                <div class="cat-bar-fill" style="width:{pct}%; background:{color};"></div>
+            </div>
+        </div>"""
+    st.markdown(html, unsafe_allow_html=True)
 
-Rules:
-- amt must be a NUMBER (no commas, no currency symbols)
-- Convert ₹1,85,000 → 185000
-- time_hint must be HH:MM (24-hour)
+def render_txn_table(transactions: list):
+    rows = ""
+    for i, txn in enumerate(transactions):
+        flag = "🔴" if (txn.get("txn_velocity", 0) >= 5 or txn.get("location_change") == 1) else "🟢"
+        rows += f"""
+        <tr>
+            <td>#{i+1}</td>
+            <td class="txn-amount">₹{txn['amount']:,.0f}</td>
+            <td>{txn['category']}</td>
+            <td>{txn['hour']:02d}:00</td>
+            <td>{"Yes" if txn['location_change'] else "No"}</td>
+            <td>{txn['txn_velocity']}/hr</td>
+            <td>{flag}</td>
+        </tr>"""
+    st.markdown(f"""
+    <table class="txn-table">
+        <thead><tr>
+            <th>#</th><th>Amount</th><th>Category</th>
+            <th>Hour</th><th>Loc. Change</th><th>Velocity</th><th>Risk</th>
+        </tr></thead>
+        <tbody>{rows}</tbody>
+    </table>""", unsafe_allow_html=True)
 
-Fields:
-- amt
-- merchant_city
-- time_hint
+# =====================================================
+# TOP BAR
+# =====================================================
+health = check_api_health()
+api_ok = health and health.get("healthy", False)
 
-Text:
-\"\"\"{user_text}\"\"\"
-"""
-    resp = llm.invoke(prompt)
+st.markdown(f"""
+<div class="top-bar">
+    <div class="top-bar-brand">◈ FINANCE_AI TERMINAL v3.0</div>
+    <div class="top-bar-status">{'● API ONLINE' if api_ok else '● API OFFLINE'}</div>
+    <div class="top-bar-time">{datetime.now().strftime('%d %b %Y  %H:%M:%S')}</div>
+</div>
+""", unsafe_allow_html=True)
 
-    return try_parse_json(resp.content)
+# =====================================================
+# SIDEBAR
+# =====================================================
+with st.sidebar:
+    st.markdown('<div class="sidebar-logo">◈ FINANCE_AI</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-section">Navigation</div>', unsafe_allow_html=True)
 
-def detect_city_from_text(text: str):
-    text = text.lower()
-    for city in CITY_COORDS.keys():
-        if city in text:
-            return city
-    return None
+    mode = st.selectbox(
+        "Mode",
+        ["🤖 Agent Analysis", "💬 AI Chat Assistant", "🔍 Fraud Inspector", "📊 Spending Classifier", "💳 Credit Scorer"],
+        label_visibility="collapsed"
+    )
 
-# ---------------- FRAUD PAYLOAD BUILDER ----------------
-def build_fraud_payload(user_text: str, extracted: dict) -> dict:
-
-    # ---------- Amount ----------
-    amt = extracted.get("amt")
-    if amt is None:
-        amt = normalize_amount(user_text)
-
-    if amt is None:
-        st.error("❌ Could not extract transaction amount.")
-        st.stop()
-
-    # ---------- Time ----------
-    time_hint = extracted.get("time_hint")
-    if not time_hint:
-        m = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", user_text)
-        if m:
-            time_hint = m.group(0)
-    if time_hint:
-        trans_time = f"{datetime.now().date()} {time_hint}:00"
+    st.markdown('<div class="sidebar-section">System</div>', unsafe_allow_html=True)
+    if health:
+        models_loaded = health.get("models", {})
+        for model_name, loaded in models_loaded.items():
+            icon = "●" if loaded else "○"
+            color = "#10b981" if loaded else "#ef4444"
+            st.markdown(
+                f'<span style="font-family:JetBrains Mono;font-size:0.72rem;color:{color};">'
+                f'{icon} {model_name.upper()} MODEL</span>',
+                unsafe_allow_html=True
+            )
     else:
-        trans_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.markdown(
+            '<span style="font-family:JetBrains Mono;font-size:0.72rem;color:#ef4444;">'
+            '○ BACKEND OFFLINE</span>',
+            unsafe_allow_html=True
+        )
 
-    # ---------- City ----------
-    city = extracted.get("merchant_city")
-
-# Fallback: regex / keyword detection
-    if not city:
-        city = detect_city_from_text(user_text)
-
-    if not city or city.lower() not in CITY_COORDS:
-        st.error("❌ Could not determine merchant city from message.")
-        st.stop()
-
-    merch_lat, merch_long = CITY_COORDS[city.lower()]
-
-    return {
-        "trans_date_trans_time": trans_time,
-        "cc_num": 0,
-        "merchant": "Unknown Merchant",
-        "category": "shopping",
-        "amt": float(amt),
-        "first": "N/A",
-        "last": "N/A",
-        "gender": "M",
-        "street": "N/A",
-        "city": USER_PROFILE["city"],
-        "state": USER_PROFILE["state"],
-        "zip": USER_PROFILE["zip"],
-        "lat": USER_PROFILE["lat"],
-        "long": USER_PROFILE["long"],
-        "city_pop": USER_PROFILE["city_pop"],
-        "job": USER_PROFILE["job"],
-        "dob": USER_PROFILE["dob"],
-        "trans_num": "AUTO",
-        "merch_lat": merch_lat,
-        "merch_long": merch_long
-    }
+    st.markdown('<div class="sidebar-section">Info</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<span style="font-family:JetBrains Mono;font-size:0.7rem;color:#475569;">'
+        f'Endpoint: {API_BASE_URL}</span>',
+        unsafe_allow_html=True
+    )
 
 
-# ---------------- SPENDING EXTRACTION ----------------
-def extract_spending_info(user_text: str) -> dict:
-    # 1) If user pasted JSON, parse it directly.
-    direct = try_parse_json(user_text)
-    if direct:
-        return direct
+# ======================================================
+# MODE: AGENT ANALYSIS
+# ======================================================
+if "🤖 Agent Analysis" in mode:
+    st.markdown('<div class="section-header">Agentic AI — Multi-Model Orchestration</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">User Financial Profile</div>', unsafe_allow_html=True)
+    st.markdown("Select a user to run the full AI pipeline — spending classification, credit scoring, and fraud detection.")
 
-    # 2) LLM extraction as fallback.
-    prompt = f"""
-Extract monthly financial information.
-Return JSON ONLY.
+    col_sel, col_info = st.columns([1, 2])
+    with col_sel:
+        selected_user = st.selectbox("User Profile", list(USERS.keys()), label_visibility="visible")
 
-Fields:
-- income
-- housing
-- food
-- transport
-- utilities
-- discretionary
+    user_data = USERS[selected_user]
 
-Text:
-\"\"\"{user_text}\"\"\"
-"""
-    resp = llm.invoke(prompt)
-    parsed = try_parse_json(resp.content)
-    if parsed:
-        return parsed
+    with col_info:
+        st.markdown(f"""
+        <div class="user-card">
+            <div class="user-avatar">{user_data['avatar']}</div>
+            <div>
+                <div class="user-name">{selected_user}</div>
+                <div class="user-archetype">{user_data['archetype']}</div>
+                <div style="font-family:JetBrains Mono;font-size:0.7rem;color:#475569;margin-top:0.25rem;">
+                    Credit Limit: ₹{user_data['credit_limit']:,.0f} &nbsp;|&nbsp; {len(user_data['transactions'])} Transactions
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # 3) Regex fallback for patterns like "income 60000, housing 20000, ..."
-    patterns = {
-        "income": r"(income|monthly income)\s*(is|=)?\s*[\$₹]?\s*([\d,]+)",
-        "housing": r"(housing|rent|mortgage)\s*(is|=)?\s*[\$₹]?\s*([\d,]+)",
-        "food": r"(food|groceries)\s*(is|=)?\s*[\$₹]?\s*([\d,]+)",
-        "transport": r"(transport|transportation|travel)\s*(is|=)?\s*[\$₹]?\s*([\d,]+)",
-        "utilities": r"(utilities|utility)\s*(is|=)?\s*[\$₹]?\s*([\d,]+)",
-        "discretionary": r"(discretionary|shopping|entertainment|misc)\s*(is|=)?\s*[\$₹]?\s*([\d,]+)"
-    }
-    extracted = {}
-    for key, pat in patterns.items():
-        m = re.search(pat, user_text, flags=re.IGNORECASE)
-        if m:
-            extracted[key] = float(m.group(3).replace(",", ""))
+    # Transaction preview
+    st.markdown('<div class="section-header" style="margin-top:1rem;">Transaction History</div>', unsafe_allow_html=True)
+    render_txn_table(user_data["transactions"])
 
-    return extracted
+    st.markdown("<br>", unsafe_allow_html=True)
+    run_col, _ = st.columns([1, 2])
+    with run_col:
+        run_agent = st.button("▶ RUN AGENT ANALYSIS")
 
-def try_parse_json(text: str) -> dict:
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-    try:
-        match = re.search(r"\{[\s\S]*\}", text)
-        if match:
-            return json.loads(match.group(0))
-    except Exception:
-        return {}
-    return {}
-
-def extract_credit_info(user_text: str) -> dict:
-    prompt = f"""
-Extract credit features for risk prediction.
-Return JSON ONLY with ALL fields. If not mentioned, use null.
-
-Fields:
-- ExternalRiskEstimate
-- MSinceOldestTradeOpen
-- MSinceMostRecentTradeOpen
-- AverageMInFile
-- NumSatisfactoryTrades
-- NumTrades60Ever2DerogPubRec
-- NumTrades90Ever2DerogPubRec
-- PercentTradesNeverDelq
-- MSinceMostRecentDelq
-- MaxDelq2PublicRecLast12M
-- MaxDelqEver
-- NumTotalTrades
-- NumTradesOpeninLast12M
-- PercentInstallTrades
-- MSinceMostRecentInqexcl7days
-- NumInqLast6M
-- NumInqLast6Mexcl7days
-- NetFractionRevolvingBurden
-- NetFractionInstallBurden
-- NumRevolvingTradesWBalance
-- NumInstallTradesWBalance
-- NumBank2NatlTradesWHighUtilization
-- PercentTradesWBalance
-
-Text:
-\"\"\"{user_text}\"\"\"
-"""
-    resp = llm.invoke(prompt)
-    try:
-        return json.loads(resp.content)
-    except Exception:
-        return {}
-
-def validate_credit_payload(payload: dict) -> list:
-    required = [
-        "ExternalRiskEstimate",
-        "MSinceOldestTradeOpen",
-        "MSinceMostRecentTradeOpen",
-        "AverageMInFile",
-        "NumSatisfactoryTrades",
-        "NumTrades60Ever2DerogPubRec",
-        "NumTrades90Ever2DerogPubRec",
-        "PercentTradesNeverDelq",
-        "MSinceMostRecentDelq",
-        "MaxDelq2PublicRecLast12M",
-        "MaxDelqEver",
-        "NumTotalTrades",
-        "NumTradesOpeninLast12M",
-        "PercentInstallTrades",
-        "MSinceMostRecentInqexcl7days",
-        "NumInqLast6M",
-        "NumInqLast6Mexcl7days",
-        "NetFractionRevolvingBurden",
-        "NetFractionInstallBurden",
-        "NumRevolvingTradesWBalance",
-        "NumInstallTradesWBalance",
-        "NumBank2NatlTradesWHighUtilization",
-        "PercentTradesWBalance"
-    ]
-    missing = [k for k in required if payload.get(k) is None]
-    return missing
-
-
-def build_spending_payload(extracted: dict) -> dict:
-    income = extracted.get("income") or USER_PROFILE["monthly_income"]
-
-    housing = extracted.get("housing", 0)
-    food = extracted.get("food", 0)
-    transport = extracted.get("transport", 0)
-    utilities = extracted.get("utilities", 0)
-    discretionary = extracted.get("discretionary", 0)
-
-    total_spend = housing + food + transport + utilities + discretionary
-    savings = max(income - total_spend, 0)
-
-    def r(x): return round(x / income, 3) if income > 0 else 0
-
-    return {
-        "age": USER_PROFILE["age"],
-        "household_size": USER_PROFILE["household_size"],
-        "monthly_income": income,
-        "housing_ratio": r(housing),
-        "food_ratio": r(food),
-        "transport_ratio": r(transport),
-        "utilities_ratio": r(utilities),
-        "discretionary_ratio": r(discretionary),
-        "savings_ratio": r(savings),
-        "owns_house": USER_PROFILE["owns_house"],
-        "owns_vehicle": USER_PROFILE["owns_vehicle"],
-        "city_type": USER_PROFILE["city_type"]
-    }
-
-
-# =====================================================
-# CHAT LOOP
-# =====================================================
-if mode == "Chat":
-    user_input = st.chat_input("Ask about fraud, credit, or spending...")
-
-    if user_input:
-        st.chat_message("user").markdown(user_input)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Analyzing..."):
-
-                intent = detect_intent(user_input)
-                st.write("Spending Profile Detected intent:", intent)
-
-                # ================= FRAUD =================
-                if intent == "fraud":
-                    extracted = extract_transaction_info(user_input)
-                    payload = build_fraud_payload(user_input, extracted)
-
-                    st.write("Spending Profile Fraud payload:")
-                    st.caption("Note: `city/state/zip` are cardholder profile; merchant location is in `merch_lat/merch_long`.")
-                    display_payload = dict(payload)
-                    display_payload["merchant_city_detected"] = detect_city_from_text(user_input)
-                    display_payload["time_hint_detected"] = extracted.get("time_hint")
-                    st.json(display_payload)
-
-                    result = requests.post(
-                        f"{API_BASE_URL}/fraud/detect",
-                        json=payload
-                    ).json()
-
-                    st.success("Spending Profile Fraud Detection Result")
-                    st.json(result)
-
-                # ================= SPENDING =================
-                elif intent == "spending":
-                    extracted = extract_spending_info(user_input)
-                    payload = build_spending_payload(extracted)
-
-                    st.write("Spending Profile Spending payload:")
-                    st.json(payload)
-
-                    result = requests.post(
-                        f"{API_BASE_URL}/spending-lite/predict",
-                        json=payload
-                    ).json()
-
-                    st.success("Spending Profile Spending Profile")
-                    st.json(result)
-
-                # ================= CREDIT =================
-                elif intent == "credit":
-                    payload = try_parse_json(user_input)
-                    if not payload:
-                        payload = extract_credit_info(user_input)
-
-                    missing = validate_credit_payload(payload)
-                    if missing:
-                        st.warning("Spending Profile?? Credit prediction needs structured inputs.")
-                        st.write("Missing fields:", missing)
-                        st.info("Tip: paste a JSON object with all required fields.")
-                        st.json({k: None for k in missing})
-                        st.stop()
-
-                    result = requests.post(
-                        f"{API_BASE_URL}/credit-score/predict",
-                        json=payload
-                    ).json()
-
-                    st.success("Error Credit Risk Result")
-                    st.json(result)
-
-                else:
-                    st.warning("Error I couldn't determine what you want to analyze.")
-
-# =====================================================
-# MANUAL FORMS
-# =====================================================
-if mode == "Credit Manual":
-    st.subheader("Credit Risk Form")
-    st.caption("Fill the fields below to run the credit risk model without JSON.")
-
-    SAMPLE_CREDIT_PROFILE = {
-        "ExternalRiskEstimate": 72,
-        "MSinceOldestTradeOpen": 180,
-        "MSinceMostRecentTradeOpen": 6,
-        "AverageMInFile": 84,
-        "NumSatisfactoryTrades": 12,
-        "NumTrades60Ever2DerogPubRec": 0,
-        "NumTrades90Ever2DerogPubRec": 0,
-        "PercentTradesNeverDelq": 96,
-        "MSinceMostRecentDelq": 72,
-        "MaxDelq2PublicRecLast12M": 7,
-        "MaxDelqEver": 8,
-        "NumTotalTrades": 15,
-        "NumTradesOpeninLast12M": 3,
-        "PercentInstallTrades": 33,
-        "MSinceMostRecentInqexcl7days": 2,
-        "NumInqLast6M": 1,
-        "NumInqLast6Mexcl7days": 1,
-        "NetFractionRevolvingBurden": 28,
-        "NetFractionInstallBurden": 12,
-        "NumRevolvingTradesWBalance": 4,
-        "NumInstallTradesWBalance": 2,
-        "NumBank2NatlTradesWHighUtilization": 1,
-        "PercentTradesWBalance": 45
-    }
-
-    use_sample = st.checkbox("Use sample credit profile", value=True)
-
-    with st.form("credit_form"):
-        defaults = SAMPLE_CREDIT_PROFILE if use_sample else {k: 0 for k in SAMPLE_CREDIT_PROFILE}
-
-        ExternalRiskEstimate = st.number_input("ExternalRiskEstimate", value=float(defaults["ExternalRiskEstimate"]))
-        MSinceOldestTradeOpen = st.number_input("MSinceOldestTradeOpen", value=float(defaults["MSinceOldestTradeOpen"]))
-        MSinceMostRecentTradeOpen = st.number_input("MSinceMostRecentTradeOpen", value=float(defaults["MSinceMostRecentTradeOpen"]))
-        AverageMInFile = st.number_input("AverageMInFile", value=float(defaults["AverageMInFile"]))
-        NumSatisfactoryTrades = st.number_input("NumSatisfactoryTrades", value=float(defaults["NumSatisfactoryTrades"]))
-        NumTrades60Ever2DerogPubRec = st.number_input("NumTrades60Ever2DerogPubRec", value=float(defaults["NumTrades60Ever2DerogPubRec"]))
-        NumTrades90Ever2DerogPubRec = st.number_input("NumTrades90Ever2DerogPubRec", value=float(defaults["NumTrades90Ever2DerogPubRec"]))
-        PercentTradesNeverDelq = st.number_input("PercentTradesNeverDelq", value=float(defaults["PercentTradesNeverDelq"]))
-        MSinceMostRecentDelq = st.number_input("MSinceMostRecentDelq", value=float(defaults["MSinceMostRecentDelq"]))
-        MaxDelq2PublicRecLast12M = st.number_input("MaxDelq2PublicRecLast12M", value=float(defaults["MaxDelq2PublicRecLast12M"]))
-        MaxDelqEver = st.number_input("MaxDelqEver", value=float(defaults["MaxDelqEver"]))
-        NumTotalTrades = st.number_input("NumTotalTrades", value=float(defaults["NumTotalTrades"]))
-        NumTradesOpeninLast12M = st.number_input("NumTradesOpeninLast12M", value=float(defaults["NumTradesOpeninLast12M"]))
-        PercentInstallTrades = st.number_input("PercentInstallTrades", value=float(defaults["PercentInstallTrades"]))
-        MSinceMostRecentInqexcl7days = st.number_input("MSinceMostRecentInqexcl7days", value=float(defaults["MSinceMostRecentInqexcl7days"]))
-        NumInqLast6M = st.number_input("NumInqLast6M", value=float(defaults["NumInqLast6M"]))
-        NumInqLast6Mexcl7days = st.number_input("NumInqLast6Mexcl7days", value=float(defaults["NumInqLast6Mexcl7days"]))
-        NetFractionRevolvingBurden = st.number_input("NetFractionRevolvingBurden", value=float(defaults["NetFractionRevolvingBurden"]))
-        NetFractionInstallBurden = st.number_input("NetFractionInstallBurden", value=float(defaults["NetFractionInstallBurden"]))
-        NumRevolvingTradesWBalance = st.number_input("NumRevolvingTradesWBalance", value=float(defaults["NumRevolvingTradesWBalance"]))
-        NumInstallTradesWBalance = st.number_input("NumInstallTradesWBalance", value=float(defaults["NumInstallTradesWBalance"]))
-        NumBank2NatlTradesWHighUtilization = st.number_input("NumBank2NatlTradesWHighUtilization", value=float(defaults["NumBank2NatlTradesWHighUtilization"]))
-        PercentTradesWBalance = st.number_input("PercentTradesWBalance", value=float(defaults["PercentTradesWBalance"]))
-
-        submitted = st.form_submit_button("Run Credit Risk")
-
-        if submitted:
+    if run_agent:
+        if not api_ok:
+            st.error("⚠️ Backend API is offline. Start the FastAPI server and reload.")
+        else:
             payload = {
-                "ExternalRiskEstimate": ExternalRiskEstimate,
-                "MSinceOldestTradeOpen": MSinceOldestTradeOpen,
-                "MSinceMostRecentTradeOpen": MSinceMostRecentTradeOpen,
-                "AverageMInFile": AverageMInFile,
-                "NumSatisfactoryTrades": NumSatisfactoryTrades,
-                "NumTrades60Ever2DerogPubRec": NumTrades60Ever2DerogPubRec,
-                "NumTrades90Ever2DerogPubRec": NumTrades90Ever2DerogPubRec,
-                "PercentTradesNeverDelq": PercentTradesNeverDelq,
-                "MSinceMostRecentDelq": MSinceMostRecentDelq,
-                "MaxDelq2PublicRecLast12M": MaxDelq2PublicRecLast12M,
-                "MaxDelqEver": MaxDelqEver,
-                "NumTotalTrades": NumTotalTrades,
-                "NumTradesOpeninLast12M": NumTradesOpeninLast12M,
-                "PercentInstallTrades": PercentInstallTrades,
-                "MSinceMostRecentInqexcl7days": MSinceMostRecentInqexcl7days,
-                "NumInqLast6M": NumInqLast6M,
-                "NumInqLast6Mexcl7days": NumInqLast6Mexcl7days,
-                "NetFractionRevolvingBurden": NetFractionRevolvingBurden,
-                "NetFractionInstallBurden": NetFractionInstallBurden,
-                "NumRevolvingTradesWBalance": NumRevolvingTradesWBalance,
-                "NumInstallTradesWBalance": NumInstallTradesWBalance,
-                "NumBank2NatlTradesWHighUtilization": NumBank2NatlTradesWHighUtilization,
-                "PercentTradesWBalance": PercentTradesWBalance
+                "credit_limit": user_data["credit_limit"],
+                "transactions": user_data["transactions"]
             }
+            with st.spinner("Running AI pipeline..."):
+                result, err = post_json("/agent/analyze-user", payload)
 
-            result = requests.post(
-                f"{API_BASE_URL}/credit-score/predict",
-                json=payload
-            ).json()
+            if err:
+                st.error(f"API Error: {err}")
+            elif result:
+                st.markdown("---")
+                st.markdown('<div class="section-header">Analysis Results</div>', unsafe_allow_html=True)
 
-            st.success("Error Credit Risk Result")
-            st.json(result)
+                # ── Metric tiles ──
+                score = result.get("credit_score", 0)
+                sc = score_color(score)
+                fraud_flag = result.get("fraud_status", "")
+                fraud_is = "🚨" in fraud_flag
+                utilization = result.get("credit_utilization", 0)
 
-if mode == "Spending Manual":
-    st.subheader("Spending Classifier Form")
-    st.caption("Defaults are prefilled from a typical monthly profile.")
+                st.markdown(f"""
+                <div class="metric-grid">
+                    <div class="metric-tile">
+                        <div class="metric-label">Credit Score</div>
+                        <div class="metric-value" style="color:{sc};">{score}</div>
+                        <div class="metric-sub">{result.get('risk_band','—')}</div>
+                    </div>
+                    <div class="metric-tile">
+                        <div class="metric-label">Spending Type</div>
+                        <div class="metric-value" style="font-size:1.2rem;padding-top:0.4rem;color:#f1f5f9;">{result.get('spending_type','—')}</div>
+                        <div class="metric-sub">Dominant: {result.get('dominant_category','—')}</div>
+                    </div>
+                    <div class="metric-tile">
+                        <div class="metric-label">Credit Utilization</div>
+                        <div class="metric-value" style="color:{'#ef4444' if utilization > 0.7 else '#f59e0b'};">{utilization*100:.1f}%</div>
+                        <div class="metric-sub">of ₹{user_data['credit_limit']:,.0f} limit</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-    with st.form("spending_form"):
-        income = st.number_input("Monthly Income", value=60000.0)
-        housing = st.number_input("Housing", value=20000.0)
-        food = st.number_input("Food", value=8000.0)
-        transport = st.number_input("Transport", value=3000.0)
-        utilities = st.number_input("Utilities", value=2000.0)
-        discretionary = st.number_input("Discretionary", value=4000.0)
+                col_left, col_right = st.columns([1, 1])
 
-        submitted = st.form_submit_button("Run Spending Classifier")
-        if submitted:
-            extracted = {
-                "income": income,
-                "housing": housing,
-                "food": food,
-                "transport": transport,
-                "utilities": utilities,
-                "discretionary": discretionary
+                with col_left:
+                    st.markdown('<div class="section-header">Spending Breakdown</div>', unsafe_allow_html=True)
+                    breakdown = result.get("spending_breakdown", {})
+                    if breakdown:
+                        st.markdown('<div class="fin-card">', unsafe_allow_html=True)
+                        render_category_bars(breakdown)
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+                with col_right:
+                    st.markdown('<div class="section-header">Fraud Status</div>', unsafe_allow_html=True)
+                    fl = result.get("fraud_risk_level", "LOW")
+                    badge_cls = "badge-fraud" if fraud_is else "badge-safe"
+                    card_cls = "fin-card-red" if fraud_is else "fin-card-green"
+
+                    st.markdown(f"""
+                    <div class="fin-card {card_cls}">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <span class="badge {badge_cls}">{result.get('fraud_status','—')}</span>
+                            <span style="font-family:JetBrains Mono;font-size:0.7rem;color:#475569;">RISK: {fl}</span>
+                        </div>
+                        <div style="font-family:JetBrains Mono;font-size:0.75rem;color:#94a3b8;margin-top:1rem;">
+                            Last transaction analyzed<br>
+                            Amount: ₹{user_data['transactions'][-1]['amount']:,.0f}<br>
+                            Hour: {user_data['transactions'][-1]['hour']:02d}:00
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.markdown('<div class="section-header" style="margin-top:1rem;">Risk Summary</div>', unsafe_allow_html=True)
+                    risk_txt = result.get("risk_summary", "")
+                    risk_cls = "insight-danger" if "HIGH" in risk_txt else ("insight-warn" if "MODERATE" in risk_txt else "insight-ok")
+                    st.markdown(f'<div class="insight-item {risk_cls}">{risk_txt}</div>', unsafe_allow_html=True)
+
+                # ── Insights ──
+                st.markdown('<div class="section-header" style="margin-top:0.5rem;">AI Insights & Recommendations</div>', unsafe_allow_html=True)
+                insights = result.get("insights", [])
+                for ins in insights:
+                    cls = insight_class(ins)
+                    st.markdown(f'<div class="insight-item {cls}">{ins}</div>', unsafe_allow_html=True)
+
+                # ── Credit recommendation ──
+                st.markdown(f"""
+                <div class="fin-card fin-card-blue" style="margin-top:1rem;">
+                    <div class="metric-label">Credit Recommendation</div>
+                    <div style="font-family:Syne,sans-serif;font-size:0.9rem;color:#93c5fd;margin-top:0.5rem;">
+                        {result.get('credit_recommendation','—')}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div style="font-family:JetBrains Mono;font-size:0.65rem;color:#334155;text-align:right;margin-top:1rem;">
+                    Analyzed at {result.get('analyzed_at','—')} UTC
+                </div>
+                """, unsafe_allow_html=True)
+
+
+# ======================================================
+# MODE: CHAT ASSISTANT
+# ======================================================
+elif "💬 AI Chat Assistant" in mode:
+    st.markdown('<div class="section-header">Natural Language Financial Queries</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">AI Chat Assistant</div>', unsafe_allow_html=True)
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # Render history
+    for msg in st.session_state.chat_history:
+        if msg["role"] == "user":
+            st.markdown(f'<div class="chat-label">YOU</div><div class="chat-user">{msg["content"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="chat-label">AI AGENT</div><div class="chat-ai">{msg["content"]}</div>', unsafe_allow_html=True)
+
+    user_input = st.text_input("Ask about any user's finances...", placeholder="e.g. What is Priya's spending classification? Is Karan's transaction suspicious?")
+
+    col_send, col_clear = st.columns([2, 1])
+    with col_send:
+        send = st.button("SEND MESSAGE")
+    with col_clear:
+        if st.button("CLEAR CHAT"):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    if send and user_input:
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+
+        # Detect user
+        matched_user = None
+        for name in USERS:
+            if name.lower() in user_input.lower():
+                matched_user = name
+                break
+
+        # Detect intent
+        intent_lower = user_input.lower()
+        response_text = ""
+
+        if matched_user and api_ok:
+            user_data = USERS[matched_user]
+            payload = {
+                "credit_limit": user_data["credit_limit"],
+                "transactions": user_data["transactions"]
             }
-            payload = build_spending_payload(extracted)
-            st.json(payload)
-            result = requests.post(
-                f"{API_BASE_URL}/spending-lite/predict",
-                json=payload
-            ).json()
-            st.success("Spending Profile Spending Profile")
-            st.json(result)
+            result, err = post_json("/agent/analyze-user", payload)
 
-if mode == "Fraud Manual":
-    st.subheader("Fraud Detection Form")
-    st.caption("Cardholder profile is fixed; set merchant city, amount, and time.")
+            if err:
+                response_text = f"⚠️ Could not contact the backend: {err}"
+            elif result:
+                if "fraud" in intent_lower or "suspicious" in intent_lower or "safe" in intent_lower:
+                    response_text = (
+                        f"**Fraud Analysis for {matched_user}** ({user_data['archetype']})\n\n"
+                        f"Status: {result['fraud_status']} — Risk Level: {result['fraud_risk_level']}\n\n"
+                        f"The most recent transaction of ₹{user_data['transactions'][-1]['amount']:,.0f} "
+                        f"at {user_data['transactions'][-1]['hour']:02d}:00 was analyzed."
+                    )
+                elif "credit" in intent_lower or "score" in intent_lower:
+                    response_text = (
+                        f"**Credit Score for {matched_user}**\n\n"
+                        f"Score: {result['credit_score']} ({result['risk_band']})\n\n"
+                        f"{result['credit_recommendation']}"
+                    )
+                elif "spend" in intent_lower or "category" in intent_lower or "overspend" in intent_lower:
+                    breakdown = result.get("spending_breakdown", {})
+                    cats = ", ".join([f"{k}: {v*100:.1f}%" for k, v in breakdown.items() if v > 0])
+                    response_text = (
+                        f"**Spending Profile for {matched_user}**\n\n"
+                        f"Classification: **{result['spending_type']}**\n"
+                        f"Dominant Category: {result['dominant_category']}\n\n"
+                        f"Breakdown: {cats}"
+                    )
+                else:
+                    # Full analysis
+                    insights_str = "\n".join([f"• {i}" for i in result["insights"]])
+                    response_text = (
+                        f"**Full Analysis — {matched_user}** ({user_data['archetype']})\n\n"
+                        f"• Credit Score: {result['credit_score']} ({result['risk_band']})\n"
+                        f"• Spending Type: {result['spending_type']}\n"
+                        f"• Fraud Status: {result['fraud_status']}\n\n"
+                        f"**Insights:**\n{insights_str}"
+                    )
+        elif matched_user and not api_ok:
+            response_text = "⚠️ Backend API is offline. Please start the FastAPI server."
+        elif LLM_AVAILABLE:
+            try:
+                prompt = f"""You are a financial AI assistant. Answer this question about personal finance clearly and concisely: {user_input}"""
+                resp = llm.invoke(prompt)
+                response_text = resp.content
+            except Exception as e:
+                response_text = f"LLM error: {e}. Try asking about a specific user (Rahul, Arjun, Priya, Neha, Karan)."
+        else:
+            response_text = (
+                "I can analyze specific users for you. Try asking:\n"
+                "• \"What is Priya's credit score?\"\n"
+                "• \"Is Karan's last transaction suspicious?\"\n"
+                "• \"Show me Arjun's spending breakdown\""
+            )
+
+        st.session_state.chat_history.append({"role": "ai", "content": response_text})
+        st.rerun()
+
+
+# ======================================================
+# MODE: FRAUD INSPECTOR
+# ======================================================
+elif "🔍 Fraud Inspector" in mode:
+    st.markdown('<div class="section-header">ML Fraud Detection — Manual Input</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Transaction Risk Analyzer</div>', unsafe_allow_html=True)
 
     with st.form("fraud_form"):
-        amt = st.number_input("Transaction Amount", value=2300.0)
-        merchant_city = st.selectbox("Merchant City", list(CITY_COORDS.keys()), index=1)
-        time_hint = st.text_input("Time (HH:MM, 24-hour)", value="14:30")
+        col1, col2 = st.columns(2)
+        with col1:
+            amt = st.number_input("Transaction Amount (₹)", min_value=0.0, value=5000.0, step=100.0)
+            hour = st.slider("Transaction Hour", 0, 23, 14)
+            location_change = st.selectbox("Location Change?", [0, 1], format_func=lambda x: "Yes — suspicious" if x else "No — same location")
+        with col2:
+            merchant_type = st.slider("Merchant Type Code", 0, 10, 1)
+            txn_velocity = st.slider("Transactions per Hour", 1, 20, 2)
 
-        submitted = st.form_submit_button("Run Fraud Detection")
-        if submitted:
-            extracted = {
-                "amt": amt,
-                "merchant_city": merchant_city,
-                "time_hint": time_hint
+        st.markdown("<br>", unsafe_allow_html=True)
+        submitted = st.form_submit_button("ANALYZE TRANSACTION")
+
+    if submitted:
+        if not api_ok:
+            st.error("Backend offline.")
+        else:
+            payload = {
+                "amount": amt, "hour": hour,
+                "location_change": location_change,
+                "merchant_type": merchant_type,
+                "txn_velocity": txn_velocity
             }
-            payload = build_fraud_payload("", extracted)
-            st.json(payload)
-            result = requests.post(
-                f"{API_BASE_URL}/fraud/detect",
-                json=payload
-            ).json()
-            st.success("Spending Profile Fraud Detection Result")
-            st.json(result)
+            with st.spinner("Analyzing..."):
+                result, err = post_json("/fraud/detect", payload)
+
+            if err:
+                st.error(f"Error: {err}")
+            elif result:
+                fraud_is = result.get("is_fraud", False)
+                rl = result.get("risk_level", "LOW")
+                card = "fin-card-red" if fraud_is else "fin-card-green"
+                badge = "badge-fraud" if fraud_is else "badge-safe"
+                icon = "🚨" if fraud_is else "✅"
+
+                st.markdown(f"""
+                <div class="fin-card {card}" style="margin-top:1.5rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                        <span style="font-family:Syne;font-size:1.5rem;font-weight:700;">{icon} {result.get('status','—')}</span>
+                        <span class="badge {badge}">RISK: {rl}</span>
+                    </div>
+                    <div style="font-family:JetBrains Mono;font-size:0.78rem;color:#94a3b8;line-height:2;">
+                        Amount: ₹{amt:,.0f} &nbsp;|&nbsp; Hour: {hour:02d}:00 &nbsp;|&nbsp;
+                        Location Change: {'YES' if location_change else 'NO'} &nbsp;|&nbsp;
+                        Velocity: {txn_velocity}/hr
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+
+# ======================================================
+# MODE: SPENDING CLASSIFIER
+# ======================================================
+elif "📊 Spending Classifier" in mode:
+    st.markdown('<div class="section-header">Spending Behavior Classification</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Category Ratio Analyzer</div>', unsafe_allow_html=True)
+    st.markdown("Enter spending ratios (must be between 0.0 and 1.0). Ideal total ≈ 1.0.")
+
+    with st.form("spending_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            food     = st.slider("Food Ratio",       0.0, 1.0, 0.20, 0.01)
+            rent     = st.slider("Rent / Housing",   0.0, 1.0, 0.30, 0.01)
+            luxury   = st.slider("Luxury Ratio",     0.0, 1.0, 0.20, 0.01)
+        with col2:
+            invest   = st.slider("Investment Ratio", 0.0, 1.0, 0.10, 0.01)
+            misc     = st.slider("Misc Ratio",       0.0, 1.0, 0.20, 0.01)
+
+        total = food + rent + luxury + invest + misc
+        st.markdown(
+            f'<div style="font-family:JetBrains Mono;font-size:0.75rem;color:{"#10b981" if 0.95 <= total <= 1.05 else "#f59e0b"};">'
+            f'Ratio Total: {total:.2f} {"✓" if 0.95 <= total <= 1.05 else "(ideally 1.0)"}</div>',
+            unsafe_allow_html=True
+        )
+        submitted = st.form_submit_button("CLASSIFY SPENDING")
+
+    if submitted:
+        if not api_ok:
+            st.error("Backend offline.")
+        else:
+            payload = {
+                "food_ratio": food, "rent_ratio": rent,
+                "luxury_ratio": luxury, "investment_ratio": invest,
+                "misc_ratio": misc
+            }
+            with st.spinner("Classifying..."):
+                result, err = post_json("/spending/predict", payload)
+
+            if err:
+                st.error(f"Error: {err}")
+            elif result:
+                spending_type = result.get("spending_type", "—")
+                dominant = result.get("dominant_category", "—")
+
+                st.markdown(f"""
+                <div class="fin-card fin-card-amber" style="margin-top:1.5rem;">
+                    <div class="metric-label">Classification Result</div>
+                    <div style="font-family:Syne;font-size:2rem;font-weight:800;color:#f1f5f9;margin:0.5rem 0;">
+                        {spending_type}
+                    </div>
+                    <div style="font-family:JetBrains Mono;font-size:0.75rem;color:#94a3b8;">
+                        Dominant Category: <span style="color:#f59e0b;">{dominant}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+
+# ======================================================
+# MODE: CREDIT SCORER
+# ======================================================
+elif "💳 Credit Scorer" in mode:
+    st.markdown('<div class="section-header">ML Credit Scoring — Manual Input</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Creditworthiness Predictor</div>', unsafe_allow_html=True)
+
+    with st.form("credit_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            monthly_spend  = st.number_input("Monthly Spend (₹)", 0.0, 1000000.0, 25000.0, 1000.0)
+            utilization    = st.slider("Credit Utilization", 0.0, 1.0, 0.40, 0.01)
+            late_payments  = st.number_input("Late Payments (count)", 0, 50, 1)
+        with col2:
+            num_txns       = st.number_input("Monthly Transactions", 1, 200, 20)
+            discretionary  = st.slider("Discretionary Ratio", 0.0, 1.0, 0.30, 0.01)
+
+        submitted = st.form_submit_button("PREDICT CREDIT SCORE")
+
+    if submitted:
+        if not api_ok:
+            st.error("Backend offline.")
+        else:
+            payload = {
+                "monthly_spend": monthly_spend,
+                "credit_utilization": utilization,
+                "late_payments": late_payments,
+                "num_transactions": num_txns,
+                "discretionary_ratio": discretionary
+            }
+            with st.spinner("Scoring..."):
+                result, err = post_json("/credit/predict", payload)
+
+            if err:
+                st.error(f"Error: {err}")
+            elif result:
+                score = result.get("credit_score", 0)
+                band  = result.get("risk_band", "—")
+                rec   = result.get("recommendation", "—")
+                sc    = score_color(score)
+
+                st.markdown(f"""
+                <div class="fin-card" style="margin-top:1.5rem;">
+                    <div class="score-display">
+                        <div class="metric-label">Predicted Credit Score</div>
+                        <div class="score-number" style="color:{sc};">{score}</div>
+                        <div class="score-band" style="color:{sc};">{band}</div>
+                    </div>
+                    <hr style="border-color:#1e2d42;margin:1rem 0;">
+                    <div style="font-family:Syne;font-size:0.88rem;color:#94a3b8;text-align:center;">
+                        {rec}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
